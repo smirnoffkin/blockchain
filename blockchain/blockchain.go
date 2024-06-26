@@ -19,6 +19,8 @@ import (
 	"os"
 	"sort"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type BlockChain struct {
@@ -64,6 +66,7 @@ CREATE TABLE BlockChain (
 )
 
 const (
+	KEY_SIZE       = 512
 	DEBUG          = true
 	TXS_LIMIT      = 2
 	DIFFICULTY     = 20
@@ -380,6 +383,167 @@ func Base64Decode(data string) []byte {
 		return nil
 	}
 	return result
+}
+
+func GeneratePrivate(bits uint) *rsa.PrivateKey {
+	priv, err := rsa.GenerateKey(rand.Reader, int(bits))
+	if err != nil {
+		return nil
+	}
+	return priv
+}
+
+func StringPrivate(priv *rsa.PrivateKey) string {
+	return Base64Encode(x509.MarshalPKCS1PrivateKey(priv))
+}
+
+func ParsePrivate(privData string) *rsa.PrivateKey {
+	priv, err := x509.ParsePKCS1PrivateKey(Base64Decode(privData))
+	if err != nil {
+		return nil
+	}
+	return priv
+}
+
+func NewUser() *User {
+	return &User{
+		PrivateKey: GeneratePrivate(KEY_SIZE),
+	}
+}
+
+func LoadUser(purse string) *User {
+	priv := ParsePrivate(purse)
+	if priv == nil {
+		return nil
+	}
+	return &User{
+		PrivateKey: priv,
+	}
+}
+
+func (user *User) Purse() string {
+	return StringPrivate(user.Private())
+}
+
+func (chain *BlockChain) LastHash() []byte {
+	var hash string
+	row := chain.DB.QueryRow("SELECT Hash FROM BlockChain ORDER BY Id DESC")
+	row.Scan(&hash)
+	return Base64Decode(hash)
+}
+
+func (block *Block) IsValid(chain *BlockChain) bool {
+	switch {
+	case block == nil:
+		return false
+	case block.Difficulty != DIFFICULTY:
+		return false
+	case !block.hashIsValid(chain, chain.Size()):
+		return false
+	case !block.signIsValid():
+		return false
+	case !block.proofIsValid():
+		return false
+	case !block.mappingIsValid():
+		return false
+	case !block.timeIsValid(chain, chain.Size()):
+		return false
+	case !block.transactionsIsValid(chain):
+		return false
+	}
+	return true
+}
+
+func (block *Block) hashIsValid(chain *BlockChain, index uint64) bool {
+	if !bytes.Equal(block.hash(), block.CurrHash) {
+		return false
+	}
+	var id uint64
+	row := chain.DB.QueryRow("SELECT Id FROM BlockChain WHERE Hash=$1", Base64Encode(block.PrevHash))
+	row.Scan(&id)
+	return id == index
+}
+
+func (block *Block) signIsValid() bool {
+	return Verify(ParsePublic(block.Miner), block.CurrHash, block.Signature) == nil
+}
+
+func (block *Block) proofIsValid() bool {
+	Target := big.NewInt(1)
+	intHash := big.NewInt(1)
+	hash := HashSum(bytes.Join(
+		[][]byte{
+			block.CurrHash,
+			ToBytes(block.Nonce),
+		},
+		[]byte{},
+	))
+	intHash.SetBytes(hash)
+	Target.Lsh(Target, 256-uint(block.Difficulty))
+	if intHash.Cmp(Target) == -1 {
+		return true
+	}
+	return false
+}
+
+func (block *Block) mappingIsValid() bool {
+	for addr := range block.Mapping {
+		if addr == STORAGE_CHAIN {
+			continue
+		}
+		flag := false
+		for _, tx := range block.Transactions {
+			if tx.Sender == addr || tx.Receiver == addr {
+				flag = true
+				break
+			}
+		}
+		if !flag {
+			return false
+		}
+	}
+	return true
+}
+
+func (block *Block) timeIsValid(chain *BlockChain, index uint64) bool {
+	btime, err := time.Parse(time.RFC3339, block.TimeStamp)
+	if err != nil {
+		return false
+	}
+	diff := time.Now().Sub(btime)
+	if diff < 0 {
+		return false
+	}
+	var sblock string
+	row := chain.DB.QueryRow("SELECT Block FROM BlockChain WHERE Hash=$1", Base64Encode(block.PrevHash))
+	row.Scan(&sblock)
+	lblock := DeserializeBlock(sblock)
+	if lblock == nil {
+		return false
+	}
+	ltime, err := time.Parse(time.RFC3339, lblock.TimeStamp)
+	if err != nil {
+		return false
+	}
+	diff = btime.Sub(ltime)
+	return diff > 0
+}
+
+func SerializeTX(tx *Transaction) string {
+	jsonData, err := json.MarshalIndent(*tx, "", "\t")
+	if err != nil {
+		return ""
+	}
+	return string(jsonData)
+}
+
+func DeserializeTX(data string) *Transaction {
+	var tx Transaction
+	err := json.Unmarshal([]byte(data), &tx)
+	if err != nil {
+		return nil
+	}
+	return &tx
 }
 
 func (block *Block) addBalance(chain *BlockChain, receiver string, value uint64) {
