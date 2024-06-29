@@ -148,7 +148,7 @@ func addBlock(pack *nt.Package) string {
 		return "fail"
 	}
 	block := bc.DeserializeBlock(splited[2])
-	if !block.IsValid(Chain) {
+	if !block.IsValid(Chain, Chain.Size()) {
 		num, err := strconv.Atoi(splited[1])
 		if err != nil {
 			return "fail"
@@ -222,7 +222,7 @@ func getLashHash(pack *nt.Package) string {
 }
 
 func getBalance(pack *nt.Package) string {
-	return fmt.Sprintf("%d", Chain.Balance(pack.Data))
+	return fmt.Sprintf("%d", Chain.Balance(pack.Data, Chain.Size()))
 }
 
 func compareChains(address string, num uint64) {
@@ -252,6 +252,9 @@ func compareChains(address string, num uint64) {
 	}
 	defer db.Close()
 	_, err = db.Exec(bc.CREATE_TABLE)
+	if err != nil {
+		return
+	}
 	chain := &bc.BlockChain{
 		DB: db,
 	}
@@ -268,7 +271,7 @@ func compareChains(address string, num uint64) {
 		if block == nil {
 			return
 		}
-		if !block.IsValid(chain) {
+		if !block.IsValid(chain, i) {
 			return
 		}
 		chain.AddBlock(block)
