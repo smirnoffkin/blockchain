@@ -152,9 +152,9 @@ func handleClient() {
 	}
 }
 
-// func main() {
-// 	handleClient()
-// }
+func main() {
+	handleClient()
+}
 
 func inputString(begin string) string {
 	fmt.Print(begin)
@@ -193,7 +193,7 @@ func chainTx(splited []string) {
 		fmt.Println("len(splited) != 3")
 		return
 	}
-	num, err := strconv.Atoi(splited[2])
+	num, err := strconv.Atoi(strings.TrimSpace(splited[2]))
 	if err != nil {
 		fmt.Println("strconv error")
 		return
